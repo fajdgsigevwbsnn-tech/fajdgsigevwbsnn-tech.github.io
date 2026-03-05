@@ -5,6 +5,329 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Rimcheats.io — Доминируй в игре</title>
 <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Exo+2:wght@300;400;600;700;900&display=swap" rel="stylesheet">
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!--   🔥 FIREBASE CONFIG — ВСТАВЬ СВОИ ДАННЫЕ СЮДА        -->
+<!--   1. Зайди на console.firebase.google.com              -->
+<!--   2. Создай проект → Project Settings → Your Apps → </>-->
+<!--   3. Скопируй firebaseConfig и замени значения ниже    -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+  import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+  import { getFirestore, doc, setDoc, getDoc, updateDoc, collection, addDoc, serverTimestamp, query, where, getDocs, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+  // ▼▼▼ ВСТАВЬ СВОЙ КОНФИГ СЮДА ▼▼▼
+  const firebaseConfig = {
+    apiKey:            "AIzaSyA49SOo54Xh_sr5iIGwqvDW_TLnNce8HzU",
+    authDomain:        "rimcheats.firebaseapp.com",
+    projectId:         "rimcheats",
+    storageBucket:     "rimcheats.firebasestorage.app",
+    messagingSenderId: "985708594700",
+    appId:             "1:985708594700:web:b8c78219f1673426c85029"
+  };
+  // ▲▲▲ ВСТАВЬ СВОЙ КОНФИГ СЮДА ▲▲▲
+
+  const app  = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db   = getFirestore(app);
+
+  // ── Делаем auth и db доступными глобально ──
+  window._fbAuth = auth;
+  window._fbDb   = db;
+  window._fbFns  = {
+    createUserWithEmailAndPassword, signInWithEmailAndPassword,
+    signOut, onAuthStateChanged, updateProfile,
+    doc, setDoc, getDoc, updateDoc, collection, addDoc,
+    serverTimestamp, query, where, getDocs, orderBy, limit
+  };
+
+  // ── Слушаем состояние авторизации ──
+  onAuthStateChanged(auth, async (fbUser) => {
+    if (fbUser) {
+      // Загружаем данные юзера из Firestore
+      const snap = await getDoc(doc(db, "users", fbUser.uid));
+      if (snap.exists()) {
+        const data = snap.data();
+        window.balance = data.balance || 0;
+        window.currentUser = data.username || fbUser.email;
+        window._fbUid = fbUser.uid;
+        window._fbUserData = data;
+        // Обновляем UI
+        if (typeof updateNavUser === 'function') updateNavUser();
+        if (typeof renderProfile === 'function') renderProfile();
+        if (typeof document.getElementById('balanceDisplay') !== 'undefined') {
+          const bd = document.getElementById('balanceDisplay');
+          if (bd) bd.textContent = '₽ ' + (data.balance || 0);
+        }
+        console.log('✅ Firebase: вошёл как', window.currentUser);
+      }
+    } else {
+      window.currentUser = null;
+      window._fbUid = null;
+      window._fbUserData = null;
+      if (typeof updateNavUser === 'function') updateNavUser();
+      if (typeof renderProfile === 'function') renderProfile();
+    }
+  });
+
+  // ══════════════════════════════════════════════
+  //  РЕГИСТРАЦИЯ
+  // ══════════════════════════════════════════════
+  window.handleRegister = async function() {
+    const u   = document.getElementById('regUsername').value.trim();
+    const e   = document.getElementById('regEmail').value.trim();
+    const p   = document.getElementById('regPassword').value;
+    const msg = document.getElementById('regMsg');
+
+    if (!u || !e || !p) {
+      msg.style.color = '#ff4c4c';
+      msg.textContent = '✕ Заполните все поля';
+      return;
+    }
+    if (p.length < 6) {
+      msg.style.color = '#ff4c4c';
+      msg.textContent = '✕ Пароль минимум 6 символов';
+      return;
+    }
+
+    msg.style.color = '#a07de0';
+    msg.textContent = '⏳ Создаём аккаунт...';
+
+    try {
+      // Проверяем уникальность username
+      const usersRef = collection(db, "users");
+      const q = query(usersRef, where("username", "==", u));
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        msg.style.color = '#ff4c4c';
+        msg.textContent = '✕ Имя пользователя уже занято';
+        return;
+      }
+
+      // Создаём аккаунт в Firebase Auth
+      const cred = await createUserWithEmailAndPassword(auth, e, p);
+      await updateProfile(cred.user, { displayName: u });
+
+      // Сохраняем профиль в Firestore
+      await setDoc(doc(db, "users", cred.user.uid), {
+        username:    u,
+        email:       e,
+        balance:     0,
+        role:        'user',
+        registered:  new Date().toLocaleString('ru'),
+        createdAt:   serverTimestamp(),
+        purchases:   [],
+        hwid:        null
+      });
+
+      window.balance = 0;
+      window.currentUser = u;
+      window._fbUid = cred.user.uid;
+
+      msg.style.color = '#2adb7f';
+      msg.textContent = '✓ Аккаунт создан! Добро пожаловать, ' + u;
+
+      document.getElementById('regUsername').value = '';
+      document.getElementById('regEmail').value = '';
+      document.getElementById('regPassword').value = '';
+
+      if (typeof updateNavUser === 'function') updateNavUser();
+      if (typeof renderProfile === 'function') renderProfile();
+
+      setTimeout(() => closeModal('regModal'), 1800);
+
+    } catch (err) {
+      msg.style.color = '#ff4c4c';
+      if (err.code === 'auth/email-already-in-use') {
+        msg.textContent = '✕ Email уже зарегистрирован';
+      } else if (err.code === 'auth/invalid-email') {
+        msg.textContent = '✕ Неверный формат email';
+      } else if (err.code === 'auth/weak-password') {
+        msg.textContent = '✕ Слишком простой пароль';
+      } else {
+        msg.textContent = '✕ Ошибка: ' + err.message;
+      }
+    }
+  };
+
+  // ══════════════════════════════════════════════
+  //  ВХОД
+  // ══════════════════════════════════════════════
+  window.handleLogin = async function() {
+    const u   = document.getElementById('loginUsername').value.trim();
+    const p   = document.getElementById('loginPassword').value;
+    const msg = document.getElementById('loginMsg');
+
+    if (!u || !p) {
+      msg.style.color = '#ff4c4c';
+      msg.textContent = '✕ Введите email/имя и пароль';
+      return;
+    }
+
+    msg.style.color = '#a07de0';
+    msg.textContent = '⏳ Входим...';
+
+    try {
+      // Определяем: email или username
+      let emailToUse = u;
+      if (!u.includes('@')) {
+        // Ищем email по username в Firestore
+        const q = query(collection(db, "users"), where("username", "==", u));
+        const snap = await getDocs(q);
+        if (snap.empty) {
+          msg.style.color = '#ff4c4c';
+          msg.textContent = '✕ Пользователь не найден';
+          return;
+        }
+        emailToUse = snap.docs[0].data().email;
+      }
+
+      const cred = await signInWithEmailAndPassword(auth, emailToUse, p);
+      const snap = await getDoc(doc(db, "users", cred.user.uid));
+      const data = snap.data();
+
+      window.balance = data.balance || 0;
+      window.currentUser = data.username;
+      window._fbUid = cred.user.uid;
+      window._fbUserData = data;
+
+      const bd = document.getElementById('balanceDisplay');
+      if (bd) bd.textContent = '₽ ' + (data.balance || 0);
+
+      msg.style.color = '#2adb7f';
+      msg.textContent = '✓ Добро пожаловать, ' + data.username + '!';
+
+      document.getElementById('loginUsername').value = '';
+      document.getElementById('loginPassword').value = '';
+
+      if (typeof updateNavUser === 'function') updateNavUser();
+      if (typeof renderProfile === 'function') renderProfile();
+
+      setTimeout(() => {
+        closeModal('regModal');
+      }, 1400);
+
+    } catch (err) {
+      msg.style.color = '#ff4c4c';
+      if (err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
+        msg.textContent = '✕ Неверный пароль';
+      } else if (err.code === 'auth/user-not-found') {
+        msg.textContent = '✕ Пользователь не найден';
+      } else if (err.code === 'auth/too-many-requests') {
+        msg.textContent = '✕ Слишком много попыток, подождите';
+      } else {
+        msg.textContent = '✕ Ошибка входа: ' + err.message;
+      }
+    }
+  };
+
+  // ══════════════════════════════════════════════
+  //  ВЫХОД
+  // ══════════════════════════════════════════════
+  window.logoutUser = async function() {
+    try {
+      await signOut(auth);
+      window.currentUser = null;
+      window._fbUid = null;
+      window.balance = 0;
+      if (typeof updateNavUser === 'function') updateNavUser();
+      if (typeof renderProfile === 'function') renderProfile();
+      if (typeof showToast === 'function') showToast('👋 Вы вышли из аккаунта', '#a07de0');
+    } catch (err) {
+      console.error('Logout error:', err);
+    }
+  };
+
+  // ══════════════════════════════════════════════
+  //  ПОКУПКА ЧИТА — сохраняем в Firestore
+  // ══════════════════════════════════════════════
+  window._fbSavePurchase = async function(cheatName, price) {
+    if (!window._fbUid) return;
+    try {
+      const userRef = doc(db, "users", window._fbUid);
+      const snap = await getDoc(userRef);
+      const data = snap.data();
+      const purchases = data.purchases || [];
+      purchases.push({
+        cheat: cheatName,
+        price: price,
+        date: new Date().toLocaleString('ru')
+      });
+      const newBalance = (data.balance || 0) - price;
+      await updateDoc(userRef, {
+        balance: newBalance,
+        purchases: purchases
+      });
+      window.balance = newBalance;
+      window._fbUserData = { ...data, balance: newBalance, purchases };
+      const bd = document.getElementById('balanceDisplay');
+      if (bd) bd.textContent = '₽ ' + newBalance;
+
+      // Записываем транзакцию
+      await addDoc(collection(db, "transactions"), {
+        userId:    window._fbUid,
+        username:  window.currentUser,
+        type:      'purchase',
+        cheat:     cheatName,
+        amount:    -price,
+        createdAt: serverTimestamp()
+      });
+
+    } catch (err) {
+      console.error('Purchase save error:', err);
+    }
+  };
+
+  // ══════════════════════════════════════════════
+  //  ПОПОЛНЕНИЕ БАЛАНСА — сохраняем в Firestore
+  // ══════════════════════════════════════════════
+  window._fbAddBalance = async function(amount) {
+    if (!window._fbUid) return;
+    try {
+      const userRef = doc(db, "users", window._fbUid);
+      const snap = await getDoc(userRef);
+      const data = snap.data();
+      const newBalance = (data.balance || 0) + amount;
+      await updateDoc(userRef, { balance: newBalance });
+      window.balance = newBalance;
+      const bd = document.getElementById('balanceDisplay');
+      if (bd) bd.textContent = '₽ ' + newBalance;
+
+      await addDoc(collection(db, "transactions"), {
+        userId:    window._fbUid,
+        username:  window.currentUser,
+        type:      'deposit',
+        amount:    amount,
+        createdAt: serverTimestamp()
+      });
+    } catch (err) {
+      console.error('Balance update error:', err);
+    }
+  };
+
+  // ══════════════════════════════════════════════
+  //  СМЕНА НИКНЕЙМА — сохраняем в Firestore
+  // ══════════════════════════════════════════════
+  window._fbUpdateUsername = async function(newName) {
+    if (!window._fbUid) return false;
+    try {
+      // Проверяем уникальность
+      const q = query(collection(db, "users"), where("username", "==", newName));
+      const snap = await getDocs(q);
+      if (!snap.empty) return false; // занято
+
+      await updateDoc(doc(db, "users", window._fbUid), { username: newName });
+      await updateProfile(auth.currentUser, { displayName: newName });
+      return true;
+    } catch (err) {
+      console.error('Username update error:', err);
+      return false;
+    }
+  };
+
+  console.log('🔥 Firebase загружен и готов!');
+</script>
 <style>
   :root {
     --purple: #7c5cbf;
@@ -3206,7 +3529,7 @@
             <span class="torrent-size">💾 95 ГБ</span>
             <span class="torrent-rating">⭐ 9.8</span>
           </div>
-          <button class="torrent-dl-btn" onclick="startTorrentDl()">⬇ Скачать торрент</button>
+          <button class="torrent-dl-btn">⬇ Скачать торрент</button>
         </div>
       </div>
       <div class="torrent-card" onclick="torrentDownload('Minecraft')">
@@ -3218,7 +3541,7 @@
             <span class="torrent-size">💾 1.2 ГБ</span>
             <span class="torrent-rating">⭐ 9.5</span>
           </div>
-          <button class="torrent-dl-btn" onclick="startTorrentDl()">⬇ Скачать торрент</button>
+          <button class="torrent-dl-btn">⬇ Скачать торрент</button>
         </div>
       </div>
       <div class="torrent-card" onclick="torrentDownload('Geometry Dash')">
@@ -3230,7 +3553,7 @@
             <span class="torrent-size">💾 280 МБ</span>
             <span class="torrent-rating">⭐ 9.3</span>
           </div>
-          <button class="torrent-dl-btn" onclick="startTorrentDl()">⬇ Скачать торрент</button>
+          <button class="torrent-dl-btn">⬇ Скачать торрент</button>
         </div>
       </div>
       <div class="torrent-card" onclick="torrentDownload('CS2')">
@@ -3242,7 +3565,7 @@
             <span class="torrent-size">💾 32 ГБ</span>
             <span class="torrent-rating">⭐ 9.2</span>
           </div>
-          <button class="torrent-dl-btn" onclick="startTorrentDl()">⬇ Скачать торрент</button>
+          <button class="torrent-dl-btn">⬇ Скачать торрент</button>
         </div>
       </div>
       <div class="torrent-card" onclick="torrentDownload('Cyberpunk 2077')">
@@ -3254,7 +3577,7 @@
             <span class="torrent-size">💾 70 ГБ</span>
             <span class="torrent-rating">⭐ 9.0</span>
           </div>
-          <button class="torrent-dl-btn" onclick="startTorrentDl()">⬇ Скачать торрент</button>
+          <button class="torrent-dl-btn">⬇ Скачать торрент</button>
         </div>
       </div>
       <div class="torrent-card" onclick="torrentDownload('Elden Ring')">
@@ -3266,7 +3589,7 @@
             <span class="torrent-size">💾 45 ГБ</span>
             <span class="torrent-rating">⭐ 9.6</span>
           </div>
-          <button class="torrent-dl-btn" onclick="startTorrentDl()">⬇ Скачать торрент</button>
+          <button class="torrent-dl-btn">⬇ Скачать торрент</button>
         </div>
       </div>
       <div class="torrent-card" onclick="torrentDownload('The Witcher 3')">
@@ -3278,7 +3601,7 @@
             <span class="torrent-size">💾 50 ГБ</span>
             <span class="torrent-rating">⭐ 9.8</span>
           </div>
-          <button class="torrent-dl-btn" onclick="startTorrentDl()">⬇ Скачать торрент</button>
+          <button class="torrent-dl-btn">⬇ Скачать торрент</button>
         </div>
       </div>
       <div class="torrent-card" onclick="torrentDownload('RDR 2')">
@@ -3290,7 +3613,7 @@
             <span class="torrent-size">💾 150 ГБ</span>
             <span class="torrent-rating">⭐ 9.9</span>
           </div>
-          <button class="torrent-dl-btn" onclick="startTorrentDl()">⬇ Скачать торрент</button>
+          <button class="torrent-dl-btn">⬇ Скачать торрент</button>
         </div>
       </div>
       <div class="torrent-card" onclick="torrentDownload('Valorant')">
@@ -3302,7 +3625,7 @@
             <span class="torrent-size">💾 22 ГБ</span>
             <span class="torrent-rating">⭐ 9.1</span>
           </div>
-          <button class="torrent-dl-btn" onclick="startTorrentDl()">⬇ Скачать торрент</button>
+          <button class="torrent-dl-btn">⬇ Скачать торрент</button>
         </div>
       </div>
       <div class="torrent-card" onclick="torrentDownload('God of War')">
@@ -3314,7 +3637,7 @@
             <span class="torrent-size">💾 34 ГБ</span>
             <span class="torrent-rating">⭐ 9.9</span>
           </div>
-          <button class="torrent-dl-btn" onclick="startTorrentDl()">⬇ Скачать торрент</button>
+          <button class="torrent-dl-btn">⬇ Скачать торрент</button>
         </div>
       </div>
       <div class="torrent-card" onclick="torrentDownload('Spider-Man')">
@@ -3326,7 +3649,7 @@
             <span class="torrent-size">💾 75 ГБ</span>
             <span class="torrent-rating">⭐ 9.7</span>
           </div>
-          <button class="torrent-dl-btn" onclick="startTorrentDl()">⬇ Скачать торрент</button>
+          <button class="torrent-dl-btn">⬇ Скачать торрент</button>
         </div>
       </div>
       <div class="torrent-card" onclick="torrentDownload('Fortnite')">
@@ -3338,7 +3661,7 @@
             <span class="torrent-size">💾 26 ГБ</span>
             <span class="torrent-rating">⭐ 9.0</span>
           </div>
-          <button class="torrent-dl-btn" onclick="startTorrentDl()">⬇ Скачать торрент</button>
+          <button class="torrent-dl-btn">⬇ Скачать торрент</button>
         </div>
       </div>
       <div class="torrent-card" onclick="torrentDownload('Apex Legends')">
@@ -3350,7 +3673,7 @@
             <span class="torrent-size">💾 56 ГБ</span>
             <span class="torrent-rating">⭐ 9.1</span>
           </div>
-          <button class="torrent-dl-btn" onclick="startTorrentDl()">⬇ Скачать торрент</button>
+          <button class="torrent-dl-btn">⬇ Скачать торрент</button>
         </div>
       </div>
       <div class="torrent-card" onclick="torrentDownload('Rust')">
@@ -3362,7 +3685,7 @@
             <span class="torrent-size">💾 22 ГБ</span>
             <span class="torrent-rating">⭐ 9.2</span>
           </div>
-          <button class="torrent-dl-btn" onclick="startTorrentDl()">⬇ Скачать торрент</button>
+          <button class="torrent-dl-btn">⬇ Скачать торрент</button>
         </div>
       </div>
       <div class="torrent-card" onclick="torrentDownload('Dota 2')">
@@ -3374,7 +3697,7 @@
             <span class="torrent-size">💾 35 ГБ</span>
             <span class="torrent-rating">⭐ 9.4</span>
           </div>
-          <button class="torrent-dl-btn" onclick="startTorrentDl()">⬇ Скачать торрент</button>
+          <button class="torrent-dl-btn">⬇ Скачать торрент</button>
         </div>
       </div>
       <div class="torrent-card" onclick="torrentDownload('League of Legends')">
@@ -3386,7 +3709,7 @@
             <span class="torrent-size">💾 22 ГБ</span>
             <span class="torrent-rating">⭐ 9.2</span>
           </div>
-          <button class="torrent-dl-btn" onclick="startTorrentDl()">⬇ Скачать торрент</button>
+          <button class="torrent-dl-btn">⬇ Скачать торрент</button>
         </div>
       </div>
       <div class="torrent-card" onclick="torrentDownload('Genshin Impact')">
@@ -3398,7 +3721,7 @@
             <span class="torrent-size">💾 80 ГБ</span>
             <span class="torrent-rating">⭐ 9.3</span>
           </div>
-          <button class="torrent-dl-btn" onclick="startTorrentDl()">⬇ Скачать торрент</button>
+          <button class="torrent-dl-btn">⬇ Скачать торрент</button>
         </div>
       </div>
       <div class="torrent-card" onclick="torrentDownload('Terraria')">
@@ -3410,7 +3733,7 @@
             <span class="torrent-size">💾 200 МБ</span>
             <span class="torrent-rating">⭐ 9.7</span>
           </div>
-          <button class="torrent-dl-btn" onclick="startTorrentDl()">⬇ Скачать торрент</button>
+          <button class="torrent-dl-btn">⬇ Скачать торрент</button>
         </div>
       </div>
       <div class="torrent-card" onclick="torrentDownload('Stardew Valley')">
@@ -3422,7 +3745,7 @@
             <span class="torrent-size">💾 500 МБ</span>
             <span class="torrent-rating">⭐ 9.8</span>
           </div>
-          <button class="torrent-dl-btn" onclick="startTorrentDl()">⬇ Скачать торрент</button>
+          <button class="torrent-dl-btn">⬇ Скачать торрент</button>
         </div>
       </div>
       <div class="torrent-card" onclick="torrentDownload('Hollow Knight')">
@@ -3434,7 +3757,7 @@
             <span class="torrent-size">💾 9 ГБ</span>
             <span class="torrent-rating">⭐ 9.7</span>
           </div>
-          <button class="torrent-dl-btn" onclick="startTorrentDl()">⬇ Скачать торрент</button>
+          <button class="torrent-dl-btn">⬇ Скачать торрент</button>
         </div>
       </div>
       <div class="torrent-card" onclick="torrentDownload('Sekiro')">
@@ -3446,7 +3769,7 @@
             <span class="torrent-size">💾 14 ГБ</span>
             <span class="torrent-rating">⭐ 9.5</span>
           </div>
-          <button class="torrent-dl-btn" onclick="startTorrentDl()">⬇ Скачать торрент</button>
+          <button class="torrent-dl-btn">⬇ Скачать торрент</button>
         </div>
       </div>
       <div class="torrent-card" onclick="torrentDownload('Dark Souls 3')">
@@ -3458,7 +3781,7 @@
             <span class="torrent-size">💾 14 ГБ</span>
             <span class="torrent-rating">⭐ 9.6</span>
           </div>
-          <button class="torrent-dl-btn" onclick="startTorrentDl()">⬇ Скачать торрент</button>
+          <button class="torrent-dl-btn">⬇ Скачать торрент</button>
         </div>
       </div>
       <div class="torrent-card" onclick="torrentDownload('Resident Evil 4')">
@@ -3470,7 +3793,7 @@
             <span class="torrent-size">💾 67 ГБ</span>
             <span class="torrent-rating">⭐ 9.6</span>
           </div>
-          <button class="torrent-dl-btn" onclick="startTorrentDl()">⬇ Скачать торрент</button>
+          <button class="torrent-dl-btn">⬇ Скачать торрент</button>
         </div>
       </div>
       <div class="torrent-card" onclick="torrentDownload('Hogwarts Legacy')">
@@ -3482,7 +3805,7 @@
             <span class="torrent-size">💾 85 ГБ</span>
             <span class="torrent-rating">⭐ 9.0</span>
           </div>
-          <button class="torrent-dl-btn" onclick="startTorrentDl()">⬇ Скачать торрент</button>
+          <button class="torrent-dl-btn">⬇ Скачать торрент</button>
         </div>
       </div>
       <div class="torrent-card" onclick="torrentDownload('Baldurs Gate 3')">
@@ -3494,7 +3817,7 @@
             <span class="torrent-size">💾 150 ГБ</span>
             <span class="torrent-rating">⭐ 9.9</span>
           </div>
-          <button class="torrent-dl-btn" onclick="startTorrentDl()">⬇ Скачать торрент</button>
+          <button class="torrent-dl-btn">⬇ Скачать торрент</button>
         </div>
       </div>
       <div class="torrent-card" onclick="torrentDownload('Palworld')">
@@ -3506,7 +3829,7 @@
             <span class="torrent-size">💾 40 ГБ</span>
             <span class="torrent-rating">⭐ 9.1</span>
           </div>
-          <button class="torrent-dl-btn" onclick="startTorrentDl()">⬇ Скачать торрент</button>
+          <button class="torrent-dl-btn">⬇ Скачать торрент</button>
         </div>
       </div>
       <div class="torrent-card" onclick="torrentDownload('Among Us')">
@@ -3518,7 +3841,7 @@
             <span class="torrent-size">💾 250 МБ</span>
             <span class="torrent-rating">⭐ 8.8</span>
           </div>
-          <button class="torrent-dl-btn" onclick="startTorrentDl()">⬇ Скачать торрент</button>
+          <button class="torrent-dl-btn">⬇ Скачать торрент</button>
         </div>
       </div>
       <div class="torrent-card" onclick="torrentDownload('FIFA 24')">
@@ -3530,7 +3853,7 @@
             <span class="torrent-size">💾 53 ГБ</span>
             <span class="torrent-rating">⭐ 8.6</span>
           </div>
-          <button class="torrent-dl-btn" onclick="startTorrentDl()">⬇ Скачать торрент</button>
+          <button class="torrent-dl-btn">⬇ Скачать торрент</button>
         </div>
       </div>
       <div class="torrent-card" onclick="torrentDownload('CoD Warzone')">
@@ -3542,7 +3865,7 @@
             <span class="torrent-size">💾 118 ГБ</span>
             <span class="torrent-rating">⭐ 8.9</span>
           </div>
-          <button class="torrent-dl-btn" onclick="startTorrentDl()">⬇ Скачать торрент</button>
+          <button class="torrent-dl-btn">⬇ Скачать торрент</button>
         </div>
       </div>
       <div class="torrent-card" onclick="torrentDownload('Dying Light 2')">
@@ -3554,7 +3877,7 @@
             <span class="torrent-size">💾 60 ГБ</span>
             <span class="torrent-rating">⭐ 8.8</span>
           </div>
-          <button class="torrent-dl-btn" onclick="startTorrentDl()">⬇ Скачать торрент</button>
+          <button class="torrent-dl-btn">⬇ Скачать торрент</button>
         </div>
       </div>
       <div class="torrent-card" onclick="torrentDownload('Need for Speed')">
@@ -3566,7 +3889,7 @@
             <span class="torrent-size">💾 50 ГБ</span>
             <span class="torrent-rating">⭐ 8.7</span>
           </div>
-          <button class="torrent-dl-btn" onclick="startTorrentDl()">⬇ Скачать торрент</button>
+          <button class="torrent-dl-btn">⬇ Скачать торрент</button>
         </div>
       </div>
       <div class="torrent-card" onclick="torrentDownload('No Mans Sky')">
@@ -3578,7 +3901,7 @@
             <span class="torrent-size">💾 15 ГБ</span>
             <span class="torrent-rating">⭐ 8.5</span>
           </div>
-          <button class="torrent-dl-btn" onclick="startTorrentDl()">⬇ Скачать торрент</button>
+          <button class="torrent-dl-btn">⬇ Скачать торрент</button>
         </div>
       </div>
       <div class="torrent-card" onclick="torrentDownload('Forza Horizon 5')">
@@ -3590,7 +3913,7 @@
             <span class="torrent-size">💾 103 ГБ</span>
             <span class="torrent-rating">⭐ 9.4</span>
           </div>
-          <button class="torrent-dl-btn" onclick="startTorrentDl()">⬇ Скачать торрент</button>
+          <button class="torrent-dl-btn">⬇ Скачать торрент</button>
         </div>
       </div>
       <div class="torrent-card" onclick="torrentDownload('Monster Hunter World')">
@@ -3602,7 +3925,7 @@
             <span class="torrent-size">💾 48 ГБ</span>
             <span class="torrent-rating">⭐ 9.2</span>
           </div>
-          <button class="torrent-dl-btn" onclick="startTorrentDl()">⬇ Скачать торрент</button>
+          <button class="torrent-dl-btn">⬇ Скачать торрент</button>
         </div>
       </div>
       <div class="torrent-card" onclick="torrentDownload('Subnautica')">
@@ -3614,7 +3937,7 @@
             <span class="torrent-size">💾 9 ГБ</span>
             <span class="torrent-rating">⭐ 9.5</span>
           </div>
-          <button class="torrent-dl-btn" onclick="startTorrentDl()">⬇ Скачать торрент</button>
+          <button class="torrent-dl-btn">⬇ Скачать торрент</button>
         </div>
       </div>
       <div class="torrent-card" onclick="torrentDownload('Roblox')">
@@ -3626,7 +3949,7 @@
             <span class="torrent-size">💾 1.5 ГБ</span>
             <span class="torrent-rating">⭐ 8.4</span>
           </div>
-          <button class="torrent-dl-btn" onclick="startTorrentDl()">⬇ Скачать торрент</button>
+          <button class="torrent-dl-btn">⬇ Скачать торрент</button>
         </div>
       </div>
       <div class="torrent-card" onclick="torrentDownload('My Summer Car')">
@@ -3638,7 +3961,7 @@
             <span class="torrent-size">💾 3 ГБ</span>
             <span class="torrent-rating">⭐ 8.9</span>
           </div>
-          <button class="torrent-dl-btn" onclick="startTorrentDl()">⬇ Скачать торрент</button>
+          <button class="torrent-dl-btn">⬇ Скачать торрент</button>
         </div>
       </div>
       <div class="torrent-card" onclick="torrentDownload('BeamNG.drive')">
@@ -3650,7 +3973,7 @@
             <span class="torrent-size">💾 25 ГБ</span>
             <span class="torrent-rating">⭐ 9.7</span>
           </div>
-          <button class="torrent-dl-btn" onclick="startTorrentDl()">⬇ Скачать торрент</button>
+          <button class="torrent-dl-btn">⬇ Скачать торрент</button>
         </div>
       </div>
 </section>
@@ -4019,7 +4342,7 @@
           <label style="font-size:12px;font-weight:600;color:#6b7590;display:block;margin-bottom:6px;">Пароль</label>
           <input id="regPassword" type="password" placeholder="••••••••" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(124,92,191,0.2);border-radius:10px;padding:11px 14px;color:#e8eaf0;font-size:14px;font-family:'Exo 2',sans-serif;outline:none;transition:border-color 0.2s;" onfocus="this.style.borderColor='rgba(160,125,224,0.6)'" onblur="this.style.borderColor='rgba(124,92,191,0.2)'">
         </div>
-        <button onclick="handleRegister()" style="background:linear-gradient(135deg,#6b44b8,#9b6fe8);color:#fff;border:none;padding:13px;border-radius:12px;font-family:'Exo 2',sans-serif;font-size:15px;font-weight:700;cursor:pointer;margin-top:4px;transition:all 0.2s;box-shadow:0 4px 20px rgba(124,92,191,0.35);">Зарегистрироваться →</button>
+        <button onclick="window.handleRegister()" style="background:linear-gradient(135deg,#6b44b8,#9b6fe8);color:#fff;border:none;padding:13px;border-radius:12px;font-family:'Exo 2',sans-serif;font-size:15px;font-weight:700;cursor:pointer;margin-top:4px;transition:all 0.2s;box-shadow:0 4px 20px rgba(124,92,191,0.35);">Зарегистрироваться →</button>
         <div id="regMsg" style="text-align:center;font-size:13px;min-height:18px;"></div>
       </div>
     </div>
@@ -4039,7 +4362,7 @@
           <label style="font-size:12px;font-weight:600;color:#6b7590;display:block;margin-bottom:6px;">Пароль</label>
           <input id="loginPassword" type="password" placeholder="••••••••" style="width:100%;background:rgba(255,255,255,0.05);border:1px solid rgba(124,92,191,0.2);border-radius:10px;padding:11px 14px;color:#e8eaf0;font-size:14px;font-family:'Exo 2',sans-serif;outline:none;transition:border-color 0.2s;" onfocus="this.style.borderColor='rgba(160,125,224,0.6)'" onblur="this.style.borderColor='rgba(124,92,191,0.2)'">
         </div>
-        <button onclick="handleLogin()" style="background:linear-gradient(135deg,#6b44b8,#9b6fe8);color:#fff;border:none;padding:13px;border-radius:12px;font-family:'Exo 2',sans-serif;font-size:15px;font-weight:700;cursor:pointer;margin-top:4px;transition:all 0.2s;box-shadow:0 4px 20px rgba(124,92,191,0.35);">Войти →</button>
+        <button onclick="window.handleLogin()" style="background:linear-gradient(135deg,#6b44b8,#9b6fe8);color:#fff;border:none;padding:13px;border-radius:12px;font-family:'Exo 2',sans-serif;font-size:15px;font-weight:700;cursor:pointer;margin-top:4px;transition:all 0.2s;box-shadow:0 4px 20px rgba(124,92,191,0.35);">Войти →</button>
         <div id="loginMsg" style="text-align:center;font-size:13px;min-height:18px;"></div>
       </div>
     </div>
@@ -4974,7 +5297,10 @@
   }
 
   function logoutUser() {
-    if (currentUser) onlineUsers.delete(currentUser);
+    if (typeof window.logoutUser === 'function' && window.logoutUser !== logoutUser) {
+      window.logoutUser();
+      return;
+    }
     currentUser = null;
     var el = document.getElementById('navUserLabel');
     if (el) el.style.display = 'none';
@@ -6421,12 +6747,6 @@
       msg.style.color = '#2adb7f';
       msg.textContent = '✅ Торрент-файл готов к скачиванию!';
       showToast('⬇ Скачивание ' + (currentTorrentGame||'игры') + ' начато!', '#2adb7f');
-      var a = document.createElement('a');
-      a.href = 'https://image2url.com/r2/default/files/1772726186821-a32d426e-e046-4ff5-a04e-6983d196bf14.exe';
-      a.download = '';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
     }, 1500);
   }
 
@@ -6580,8 +6900,10 @@
   });
 
   // ─── AUTH SYSTEM ───
-  const users = []; // { username, email, password, registered }
-  let onlineUsers = new Set(); // usernames currently online
+  // ── Firebase заменяет локальный массив users ──
+  // Данные теперь хранятся в Firebase Firestore
+  const users = []; // оставлен для совместимости с другими частями кода
+  let onlineUsers = new Set();
   let currentUser = null;
 
   // Tab switcher
@@ -6597,62 +6919,18 @@
     loginBtn.style.cssText = loginBtn.style.cssText + (isReg ? inactiveStyle : activeStyle);
   }
 
+  // handleRegister и handleLogin определены в Firebase модуле выше
+  // Эти заглушки перенаправляют вызовы туда
   function handleRegister() {
-    const u = document.getElementById('regUsername').value.trim();
-    const e = document.getElementById('regEmail').value.trim();
-    const p = document.getElementById('regPassword').value;
-    const msg = document.getElementById('regMsg');
-    if (!u || !e || !p) {
-      msg.style.color = '#ff4c4c';
-      msg.textContent = '✕ Заполните все поля';
-      return;
+    if (window.handleRegister && window.handleRegister !== handleRegister) {
+      // уже переопределена Firebase модулем — вызов произойдёт через window
     }
-    if (users.find(x => x.username.toLowerCase() === u.toLowerCase())) {
-      msg.style.color = '#ff4c4c';
-      msg.textContent = '✕ Имя пользователя уже занято';
-      return;
-    }
-    if (users.find(x => x.email === e)) {
-      msg.style.color = '#ff4c4c';
-      msg.textContent = '✕ Email уже зарегистрирован';
-      return;
-    }
-    users.push({ username: u, email: e, password: p, registered: new Date().toLocaleString('ru') });
-    // Auto-login after register
-    loginUser(u);
-    msg.style.color = '#2adb7f';
-    msg.textContent = '✓ Аккаунт создан! Добро пожаловать, ' + u;
-    document.getElementById('regUsername').value = '';
-    document.getElementById('regEmail').value = '';
-    document.getElementById('regPassword').value = '';
-    setTimeout(() => closeModal('regModal'), 1800);
   }
 
   function handleLogin() {
-    const u = document.getElementById('loginUsername').value.trim();
-    const p = document.getElementById('loginPassword').value;
-    const msg = document.getElementById('loginMsg');
-    if (!u || !p) {
-      msg.style.color = '#ff4c4c';
-      msg.textContent = '✕ Введите имя и пароль';
-      return;
+    if (window.handleLogin && window.handleLogin !== handleLogin) {
+      // уже переопределена Firebase модулем
     }
-    const found = users.find(x => x.username.toLowerCase() === u.toLowerCase() && x.password === p);
-    if (!found) {
-      msg.style.color = '#ff4c4c';
-      msg.textContent = '✕ Неверное имя или пароль';
-      return;
-    }
-    loginUser(found.username);
-    msg.style.color = '#2adb7f';
-    msg.textContent = '✓ Добро пожаловать, ' + found.username + '!';
-    document.getElementById('loginUsername').value = '';
-    document.getElementById('loginPassword').value = '';
-    setTimeout(() => {
-      closeModal('regModal');
-      // Trigger download after login
-      triggerDownload();
-    }, 1400);
   }
 
   function loginUser(username) {
@@ -6673,12 +6951,7 @@
 
   let pendingDownload = false;
   function triggerDownload() {
-    var a = document.createElement('a');
-    a.href = 'https://image2url.com/r2/default/files/1772726186821-a32d426e-e046-4ff5-a04e-6983d196bf14.exe';
-    a.download = '';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    // Placeholder: in real use, redirect to download URL
     const toast = document.createElement('div');
     toast.style.cssText = 'position:fixed;bottom:32px;left:50%;transform:translateX(-50%);background:linear-gradient(135deg,#1a2a18,#1f3a1a);border:1px solid rgba(42,219,127,0.4);border-radius:12px;padding:14px 24px;color:#2adb7f;font-family:"Exo 2",sans-serif;font-size:14px;font-weight:700;z-index:9999;box-shadow:0 8px 30px rgba(0,0,0,0.5);animation:fadeUp 0.3s ease;';
     toast.textContent = '✓ Скачивание началось!';
